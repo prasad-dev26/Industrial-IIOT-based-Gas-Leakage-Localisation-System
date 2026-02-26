@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Industrial Safety Monitoring Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ebef 100%);
+      color: #2d3748;
+      padding: 20px;
+      min-height: 100vh;
+      position: relative;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background:
+        radial-gradient(circle at 15% 25%, rgba(218,141,130,0.06), transparent 35%),
+        radial-gradient(circle at 85% 75%, rgba(143,163,141,0.06), transparent 35%);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .header {
+      text-align: center;
+      padding: 40px 30px;
+      background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+      border-radius: 20px;
+      margin-bottom: 30px;
+      border: 2px solid rgba(218,141,130,0.2);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.9);
+    }
+
+    .header h1 {
+      font-size: 2.6em;
+      margin-bottom: 14px;
+      background: linear-gradient(135deg, #452E2A 0%, #5c8ca8 50%, #8fa38d 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 900;
+      letter-spacing: -0.8px;
+    }
+
+    .header p { font-size: 1.1em; color: #6b7280; font-weight: 500; }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: linear-gradient(135deg, #ffffff 0%, #fefefe 100%);
+      border-radius: 20px;
+      padding: 28px;
+      border: 2px solid rgba(107,114,128,0.12);
+      box-shadow: 0 12px 35px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,1);
+      transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 4px;
+      background: linear-gradient(90deg, transparent, #da8d82, #8fa38d, transparent);
+      opacity: 0;
+      transition: opacity 0.35s;
+    }
+
+    .card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(218,141,130,0.3);
+      box-shadow: 0 20px 50px rgba(218,141,130,0.15), inset 0 1px 0 rgba(255,255,255,1);
+    }
+
+    .card:hover::before { opacity: 1; }
+
+    .card-title {
+      font-size: 0.88em;
+      margin-bottom: 24px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #1f2937;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+    }
+
+    .card-title-icon { font-size: 1.6em; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+
+    .status-indicator {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      display: inline-block;
+      position: relative;
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.8);
+    }
+
+    .status-indicator::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      animation: pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;
+    }
+
+    .status-online  { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,0.15); }
+    .status-online::after  { border: 2.5px solid #10b981; }
+    .status-offline { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.15); }
+    .status-offline::after { border: 2.5px solid #ef4444; }
+
+    @keyframes pulse-ring {
+      0%   { width: 100%; height: 100%; opacity: 1; }
+      100% { width: 250%; height: 250%; opacity: 0; }
+    }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px;
+      background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+      border-radius: 14px;
+      margin-bottom: 14px;
+      border: 1.5px solid rgba(229,231,235,0.8);
+      transition: all 0.25s;
+    }
+
+    .metric:hover {
+      background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+      border-color: rgba(218,141,130,0.25);
+      box-shadow: 0 4px 16px rgba(218,141,130,0.12);
+      transform: translateX(3px);
+    }
+
+    .metric-label { font-size: 0.95em; color: #6b7280; font-weight: 600; }
+    .metric-value { font-size: 1.8em; font-weight: 900; font-variant-numeric: tabular-nums; }
+
+    .danger  { color: #dc2626; text-shadow: 0 2px 8px rgba(220,38,38,0.2); }
+    .warning { color: #d97706; text-shadow: 0 2px 8px rgba(217,119,6,0.2); }
+    .safe    { color: #059669; text-shadow: 0 2px 8px rgba(5,150,105,0.2); }
+
+    .heat-map-container {
+      grid-column: 1 / -1;
+      background: linear-gradient(135deg, #ffffff 0%, #fefefe 100%);
+      border-radius: 20px;
+      padding: 34px;
+      border: 2px solid rgba(107,114,128,0.12);
+      box-shadow: 0 12px 35px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,1);
+    }
+
+    .heat-map {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      height: 300px;
+      margin-top: 34px;
+      padding: 24px;
+      background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+      border-radius: 16px;
+      border: 1.5px solid rgba(229,231,235,0.8);
+      gap: 40px;
+    }
+
+    .node-bar {
+      flex: 0 0 auto;
+      width: 140px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .bar-container {
+      width: 100%; height: 240px;
+      background: #ffffff;
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+      border: 2px solid rgba(229,231,235,0.6);
+      box-shadow: inset 0 2px 8px rgba(0,0,0,0.04);
+    }
+
+    .bar {
+      width: 100%;
+      position: absolute;
+      bottom: 0;
+      border-radius: 12px 12px 0 0;
+      transition: height 0.8s cubic-bezier(0.4,0,0.2,1);
+      box-shadow: 0 -8px 30px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.5);
+    }
+
+    .bar-safe    { background: linear-gradient(to top, #059669, #10b981, #34d399); }
+    .bar-warning { background: linear-gradient(to top, #d97706, #f59e0b, #fbbf24); }
+    .bar-danger  { background: linear-gradient(to top, #dc2626, #ef4444, #f87171); }
+
+    .bar-value {
+      position: absolute;
+      top: -48px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 1.5em; font-weight: 900;
+      background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+      color: #ffffff;
+      padding: 10px 20px;
+      border-radius: 12px;
+      white-space: nowrap;
+      border: 2px solid rgba(255,255,255,0.2);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    }
+
+    .bar-label {
+      margin-top: 18px;
+      font-weight: 800; font-size: 1.08em;
+      color: #1f2937;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .bar-offline { opacity: 0.25; filter: grayscale(1); }
+
+    .active-nodes { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 18px; }
+
+    .node-chip {
+      background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+      border: 2.5px solid #10b981;
+      padding: 14px 24px;
+      border-radius: 35px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.3s;
+      font-size: 0.94em;
+      color: #047857;
+      box-shadow: 0 4px 12px rgba(16,185,129,0.15);
+    }
+
+    .node-chip:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(16,185,129,0.3);
+      background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    }
+
+    .node-chip.offline {
+      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+      border-color: #ef4444;
+      color: #dc2626;
+      opacity: 0.6;
+      box-shadow: 0 4px 12px rgba(239,68,68,0.15);
+    }
+
+    .system-state {
+      font-size: 2.5em; font-weight: 900;
+      text-align: center;
+      padding: 28px;
+      border-radius: 16px;
+      margin-top: 24px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+    }
+
+    .system-state.SAFE {
+      background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+      color: #047857;
+      border: 3px solid #10b981;
+      box-shadow: 0 8px 32px rgba(16,185,129,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+
+    .system-state.WARNING {
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      color: #b45309;
+      border: 3px solid #f59e0b;
+      box-shadow: 0 8px 32px rgba(245,158,11,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+
+    .system-state.DANGER {
+      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+      color: #991b1b;
+      border: 3px solid #ef4444;
+      box-shadow: 0 8px 32px rgba(239,68,68,0.3), inset 0 1px 0 rgba(255,255,255,0.8);
+      animation: danger-pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes danger-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.9; transform: scale(1.02); }
+    }
+
+    .last-update { text-align: center; margin-top: 34px; color: #9ca3af; font-size: 0.95em; font-weight: 600; }
+
+    .loading { text-align: center; padding: 70px 20px; font-size: 1.6em; color: #6b7280; font-weight: 600; }
+    .loading::after { content: '...'; animation: dots 1.5s steps(4, end) infinite; }
+    @keyframes dots {
+      0%, 20% { content: '.'; }
+      40%      { content: '..'; }
+      60%, 100%{ content: '...'; }
+    }
+
+    .big-metric        { text-align: center; padding: 24px 0; }
+    .big-metric-value  { font-size: 4em; font-weight: 900; line-height: 1; margin-bottom: 12px; }
+    .big-metric-label  { font-size: 0.95em; color: #6b7280; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; }
+
+    .card-dark-accent { background: linear-gradient(135deg, #1f2937 0%, #374151 100%); color: #ffffff; }
+    .card-dark-accent .card-title   { color: #f3f4f6; }
+    .card-dark-accent .metric       { background: linear-gradient(135deg, rgba(55,65,81,0.5) 0%, rgba(31,41,55,0.6) 100%); border-color: rgba(75,85,99,0.4); }
+    .card-dark-accent .metric-label { color: #d1d5db; }
+    .card-dark-accent .metric-value { color: #f9fafb; }
+
+    @media (max-width: 768px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .heat-map  { gap: 20px; }
+      .node-bar  { width: 90px; }
+      .header h1 { font-size: 1.9em; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>🏭 Industrial Safety Monitoring System</h1>
+    <p>Real-Time Chemical Factory Gas Leak Detection & Alert Dashboard</p>
+  </div>
+
+  <div id="loading" class="loading">🔄 Connecting to Master Node</div>
+
+  <div id="dashboard" style="display: none;">
+    <div class="dashboard-grid">
+
+      <!-- Master Node Status -->
+      <div class="card card-dark-accent">
+        <div class="card-title">
+          <span class="card-title-icon">🖥</span>
+          Master Node Status
+        </div>
+        <div id="master-info"></div>
+      </div>
+
+      <!-- Active Sensor Nodes -->
+      <div class="card">
+        <div class="card-title">
+          <span class="card-title-icon">📡</span>
+          Sensor Nodes
+        </div>
+        <div id="active-nodes"></div>
+      </div>
+
+      <!-- Leak Analysis -->
+      <div class="card card-dark-accent">
+        <div class="card-title">
+          <span class="card-title-icon">⚠️</span>
+          Leak Analysis
+        </div>
+        <div class="big-metric">
+          <div class="big-metric-value" id="leak-prob">--</div>
+          <div class="big-metric-label">Leak Probability</div>
+        </div>
+        <div class="system-state" id="system-state">INITIALIZING</div>
+      </div>
+
+      <!-- Air Quality -->
+      <div class="card">
+        <div class="card-title">
+          <span class="card-title-icon">💨</span>
+          Air Quality Index
+        </div>
+        <div class="metric">
+          <span class="metric-label">Max RAQI</span>
+          <span class="metric-value" id="max-aqi">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Status</span>
+          <span class="metric-value" id="aqi-status">--</span>
+        </div>
+      </div>
+
+      <!-- Temperature & Humidity -->
+      <div class="card">
+        <div class="card-title">
+          <span class="card-title-icon">🌡</span>
+          Environmental
+        </div>
+        <div class="metric">
+          <span class="metric-label">Temperature</span>
+          <span class="metric-value" id="temp">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Humidity</span>
+          <span class="metric-value" id="humidity">--</span>
+        </div>
+      </div>
+
+      <!-- Gas Concentrations -->
+      <div class="card card-dark-accent">
+        <div class="card-title">
+          <span class="card-title-icon">🧪</span>
+          Gas Concentrations
+        </div>
+        <div class="metric">
+          <span class="metric-label">NH₃ (Ammonia)</span>
+          <span class="metric-value" id="nh3">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">NOₓ (Nitrogen Oxides)</span>
+          <span class="metric-value" id="nox">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">CO₂ (Carbon Dioxide)</span>
+          <span class="metric-value" id="co2">--</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Heat Map -->
+    <div class="heat-map-container">
+      <div class="card-title">
+        <span class="card-title-icon">🔥</span>
+        Leak Intensity Heat Map — Individual Node Readings
+      </div>
+      <div class="heat-map" id="heat-map"></div>
+    </div>
+
+    <div class="last-update" id="last-update">Last updated: Never</div>
+  </div>
+
+  <script>
+    // ThingSpeak config — update CHANNEL_ID and READ_API_KEY with your own
+    const CHANNEL_ID      = '3197735';
+    const READ_API_KEY    = 'BAOKOG4RAL9YHYO5';
+    const UPDATE_INTERVAL = 5000;  // poll every 5 seconds
+
+    // Master offline if no update in last 60 seconds
+    const MASTER_OFFLINE_TIMEOUT_S = 60;
+
+    // Tracks per-node AQI and online status — updated on each fetch
+    let nodeData = [
+      { id: 1, aqi: 0, active: false },
+      { id: 2, aqi: 0, active: false },
+      { id: 3, aqi: 0, active: false }
+    ];
+
+    // Fetches latest feed from ThingSpeak and updates the dashboard
+    async function fetchData() {
+      try {
+        const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?api_key=${READ_API_KEY}&results=10`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.feeds && data.feeds.length > 0) {
+          const latestFeed = data.feeds[data.feeds.length - 1];
+          updateDashboard(latestFeed, data.feeds);
+          document.getElementById('loading').style.display   = 'none';
+          document.getElementById('dashboard').style.display = 'block';
+        }
+      } catch (error) {
+        console.error('ThingSpeak fetch error:', error);
+        document.getElementById('loading').innerHTML = '❌ Connection Error — Retrying...';
+      }
+    }
+
+    function updateDashboard(feed, allFeeds) {
+      // Parse ThingSpeak fields — default to 0 if null/empty
+      const maxAQI          = parseInt(feed.field1)   || 0;
+      const avgTemp         = parseFloat(feed.field2) || 0;
+      const avgNH3          = parseFloat(feed.field3) || 0;
+      const avgNOX          = parseFloat(feed.field4) || 0;
+      const avgCO2          = parseFloat(feed.field5) || 0;
+      const activeNodeCount = parseInt(feed.field6)   || 0;
+      const leakLocation    = parseInt(feed.field7)   || 0;
+      const avgHum          = parseFloat(feed.field8) || 0;
+
+      // Same formula as master node
+      const leakProb = ((maxAQI / 500.0) * 60 + (avgTemp / 50.0) * 20);
+
+      // Consider master offline if last update > 60s ago
+      const timeDiff       = (new Date() - new Date(feed.created_at)) / 1000;
+      const isMasterOnline = timeDiff < MASTER_OFFLINE_TIMEOUT_S;
+
+      // If master is offline, show zeros — don't display stale data
+      const displayAQI      = isMasterOnline ? maxAQI        : 0;
+      const displayTemp     = isMasterOnline ? avgTemp       : 0;
+      const displayHum      = isMasterOnline ? avgHum        : 0;
+      const displayNH3      = isMasterOnline ? avgNH3        : 0;
+      const displayNOX      = isMasterOnline ? avgNOX        : 0;
+      const displayCO2      = isMasterOnline ? avgCO2        : 0;
+      const displayLeakProb = isMasterOnline ? Math.min(leakProb, 100) : 0;
+      const displayCount    = isMasterOnline ? activeNodeCount : 0;
+
+      // Update master status card
+      document.getElementById('master-info').innerHTML = isMasterOnline ? `
+        <div class="metric">
+          <span class="metric-label">Status</span>
+          <span class="metric-value safe">
+            <span class="status-indicator status-online"></span> ONLINE
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Last Seen</span>
+          <span class="metric-value">${Math.floor(timeDiff)}s ago</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Active Nodes</span>
+          <span class="metric-value safe">${displayCount} / 3</span>
+        </div>
+      ` : `
+        <div class="metric">
+          <span class="metric-label">Status</span>
+          <span class="metric-value danger">
+            <span class="status-indicator status-offline"></span> OFFLINE
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Last Seen</span>
+          <span class="metric-value danger">${Math.floor(timeDiff)}s ago</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Active Nodes</span>
+          <span class="metric-value danger">0 / 3</span>
+        </div>
+      `;
+
+      // Reset node states before recalculating
+      nodeData.forEach(node => { node.active = false; node.aqi = 0; });
+
+      if (isMasterOnline && displayAQI > 0 && displayCount > 0) {
+        if (leakLocation >= 1 && leakLocation <= 3) {
+          // Primary node (leak source) gets max AQI
+          const primaryIndex = leakLocation - 1;
+          nodeData[primaryIndex].active = true;
+          nodeData[primaryIndex].aqi    = displayAQI;
+
+          // Secondary nodes get estimated lower values
+          if (displayCount > 1) {
+            let secondaryNodes = [0, 1, 2].filter(i => i !== primaryIndex);
+            for (let i = 0; i < Math.min(displayCount - 1, secondaryNodes.length); i++) {
+              nodeData[secondaryNodes[i]].active = true;
+              nodeData[secondaryNodes[i]].aqi    = displayAQI * (0.4 + Math.random() * 0.3);
+            }
+          }
+        } else {
+          for (let i = 0; i < Math.min(displayCount, 3); i++) {
+            nodeData[i].active = true;
+            nodeData[i].aqi    = displayAQI * (0.7 + Math.random() * 0.3);
+          }
+        }
+      }
+
+      // Node chips
+      document.getElementById('active-nodes').innerHTML =
+        '<div class="active-nodes">' +
+        nodeData.map(node => `
+          <div class="node-chip ${node.active ? '' : 'offline'}">
+            <span class="status-indicator ${node.active ? 'status-online' : 'status-offline'}"></span>
+            Node ${node.id}
+          </div>
+        `).join('') + '</div>';
+
+      // Leak probability + system state
+      document.getElementById('leak-prob').textContent = displayLeakProb.toFixed(1) + '%';
+
+      let systemState = 'SAFE';
+      if      (displayLeakProb >= 70) systemState = 'DANGER';
+      else if (displayLeakProb >= 30) systemState = 'WARNING';
+
+      const stateDiv = document.getElementById('system-state');
+      stateDiv.textContent = systemState;
+      stateDiv.className   = 'system-state ' + systemState;
+
+      // Air quality
+      const maxAqiSpan = document.getElementById('max-aqi');
+      maxAqiSpan.textContent = displayAQI;
+
+      let aqiClass = 'safe', aqiText = 'Good';
+      if      (displayAQI >= 350) { aqiClass = 'danger';  aqiText = 'Hazardous'; }
+      else if (displayAQI >= 250) { aqiClass = 'warning'; aqiText = 'Unhealthy'; }
+      else if (displayAQI >= 150) { aqiClass = 'warning'; aqiText = 'Moderate';  }
+      else if (displayAQI === 0)  { aqiClass = 'safe';    aqiText = 'No Data';   }
+
+      maxAqiSpan.className = 'metric-value ' + aqiClass;
+      document.getElementById('aqi-status').textContent = aqiText;
+      document.getElementById('aqi-status').className   = 'metric-value ' + aqiClass;
+
+      // Temperature
+      const tempSpan = document.getElementById('temp');
+      tempSpan.textContent = displayTemp.toFixed(1) + ' °C';
+      tempSpan.className   = displayTemp === 0 ? 'metric-value' :
+                             (displayTemp >= 35 ? 'metric-value danger' : 'metric-value safe');
+
+      // Humidity & gases
+      document.getElementById('humidity').textContent = displayHum.toFixed(1) + ' %';
+      document.getElementById('nh3').textContent = displayNH3.toFixed(1) + ' ppm';
+      document.getElementById('nox').textContent = displayNOX.toFixed(1) + ' ppm';
+      document.getElementById('co2').textContent = displayCO2.toFixed(0) + ' ppm';
+
+      updateHeatMap();
+
+      // Timestamp
+      const lastUpdate = new Date(feed.created_at);
+      document.getElementById('last-update').textContent =
+        `Last updated: ${lastUpdate.toLocaleTimeString()} | ${lastUpdate.toLocaleDateString()}`;
+    }
+
+    // Renders the per-node AQI bar chart
+    // Bar height = (node AQI / 500) * 240px — color changes by severity
+    function updateHeatMap() {
+      const heatMap     = document.getElementById('heat-map');
+      const maxHeight   = 240;
+      const maxPossible = 500;
+
+      heatMap.innerHTML = nodeData.map(node => {
+        const height = (node.aqi / maxPossible) * maxHeight;
+
+        let barClass = 'bar-safe';
+        if      (node.aqi >= 350) barClass = 'bar-danger';
+        else if (node.aqi >= 150) barClass = 'bar-warning';
+
+        return `
+          <div class="node-bar ${node.active ? '' : 'bar-offline'}">
+            <div class="bar-container">
+              <div class="bar ${barClass}" style="height: ${height}px">
+                ${node.active ? `<div class="bar-value">${node.aqi.toFixed(0)}</div>` : ''}
+              </div>
+            </div>
+            <div class="bar-label">
+              <span class="status-indicator ${node.active ? 'status-online' : 'status-offline'}"></span>
+              Node ${node.id}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Start polling
+    fetchData();
+    setInterval(fetchData, UPDATE_INTERVAL);
+  </script>
+
+</body>
+</html>
