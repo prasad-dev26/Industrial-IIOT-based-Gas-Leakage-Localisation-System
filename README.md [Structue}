@@ -1,0 +1,254 @@
+# 🏭 IoT-Based Safety Monitoring & Alert System for Chemical Factories
+
+[![Platform](https://img.shields.io/badge/Platform-ESP32-blue)](https://www.espressif.com/)
+[![Protocol](https://img.shields.io/badge/Protocol-ESP--NOW%20%2B%20WiFi-orange)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
+[![Cloud](https://img.shields.io/badge/Cloud-ThingSpeak%20%2B%20Blynk-green)](https://thingspeak.com/)
+[![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE)
+
+> **Final Year Major Project — BE Electronics Engineering**  
+> Terna Engineering College, Navi Mumbai | 2024–25
+
+---
+
+## 📌 What is this project?
+
+Chemical factories deal with gases like NH₃, NOₓ and CO₂ every single day — and a small leak can spiral into something really dangerous, really fast. Most existing systems are either too centralized or just not smart enough to tell you *where* the leak is actually coming from.
+
+So I built this — a distributed IoT setup where multiple ESP32 nodes are placed around the factory floor. Each one keeps sniffing the air on its own, and the moment something looks off, the whole system responds: local LEDs light up, a buzzer goes off, a mobile alert fires, and everything gets logged to the cloud simultaneously.
+
+The part I'm most proud of is the **leak localization** — the system tells you *which specific node* is detecting the highest gas levels, so you know exactly which area to evacuate or investigate first.
+
+---
+
+## 🎯 Features
+
+- 3 independent sensor nodes, each working standalone without needing the master
+- ESP-NOW for fast, router-free communication — no Wi-Fi needed between nodes
+- Leak probability score derived from gas concentration + temperature data
+- Pinpoints which node is closest to the leak source
+- Real-time mobile monitoring and manual override via Blynk
+- ThingSpeak for time-series cloud logging and graphs
+- A browser dashboard that needs zero backend — just open the HTML file
+- Easily scalable if you want to add more nodes later
+
+---
+
+## 🏗️ How It All Fits Together
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     CHEMICAL FACTORY FLOOR                      │
+│                                                                 │
+│  [Sensor Node 1]    [Sensor Node 2]    [Sensor Node 3]          │
+│  MQ-135 + DHT11     MQ-135 + DHT11     MQ-135 + DHT11          │
+│  ESP32              ESP32              ESP32                    │
+│       │                  │                  │                   │
+│       └──────────────────┴──────────────────┘                  │
+│                  ESP-NOW (no router needed)                      │
+│                          │                                      │
+│                   [Master Node]                                 │
+│                    ESP32 + LEDs + Buzzer                        │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ Wi-Fi
+                    ┌────────┴────────┐
+                    │                 │
+              [ThingSpeak]        [Blynk IoT]
+              (data logging)    (mobile alerts)
+                    │
+             [Web Dashboard]
+             (index.html — just open in browser)
+```
+
+The sensor nodes don't touch Wi-Fi at all — they only talk to the master via ESP-NOW. Only the master handles cloud communication. This keeps the sensor nodes simple, low-power, and focused on one job: sensing.
+
+---
+
+## 🔧 Hardware Used
+
+### Each Sensor Node (×3)
+| Part | What it does |
+|------|-------------|
+| ESP32 (30-pin) | Main controller + ESP-NOW radio |
+| MQ-135 | Gas sensor — reads NH₃, NOₓ, CO₂ levels |
+| DHT11 | Temperature & humidity |
+| Red LED | Lights up locally when gas/temp exceeds threshold |
+| Green LED | Stays on when conditions are normal |
+
+### Master Node (×1)
+| Part | What it does |
+|------|-------------|
+| ESP32 (30-pin) | Central brain + Wi-Fi to cloud |
+| Red LED | System-level danger indicator |
+| Green LED | System safe indicator |
+| Buzzer | Siren when leak probability hits 70%+ |
+
+---
+
+## ☁️ Cloud Setup
+
+### ThingSpeak Fields
+
+| Field | Data |
+|-------|------|
+| 1 | Max Air Quality Index (worst case across nodes) |
+| 2 | Average Temperature (°C) |
+| 3 | Average NH₃ (ppm) |
+| 4 | Average NOₓ (ppm) |
+| 5 | Average CO₂ (ppm) |
+| 6 | Leak Source Node ID |
+| 7 | Leak Probability (%) |
+| 8 | Average Humidity (%) |
+
+Updates every 20 seconds. ThingSpeak enforces a 15s minimum, so 20s gives a safe buffer.
+
+### Blynk Virtual Pins
+
+| Pin | Data | Widget |
+|-----|------|--------|
+| V0 | AQI | Gauge |
+| V1 | Temperature | Gauge |
+| V2 | NH₃ | Value Display |
+| V3 | NOₓ | Value Display |
+| V4 | CO₂ | Value Display |
+| V7 | Humidity | Value Display |
+| V8 | Red LED | Button (manual override) |
+| V9 | Buzzer | Button (manual override) |
+
+---
+
+## 📁 Repo Structure
+
+```
+IoT-Safety-Monitoring/
+│
+├── master_node/
+│   └── master_node.ino        # Central controller — handles aggregation, alerts & cloud
+│
+├── sensor_node/
+│   └── sensor_node.ino        # Flash this on all 3 nodes (change NODE_ID each time)
+│
+├── web_dashboard/
+│   └── index.html             # Live browser dashboard, no server needed
+│
+└── README.md
+```
+
+---
+
+## 🚀 Getting Started
+
+### What You Need
+- Arduino IDE with ESP32 board support installed
+- Libraries: `BlynkSimpleEsp32`, `ThingSpeak`, `DHT sensor library`
+- A ThingSpeak account + channel configured
+- A Blynk IoT account + template configured
+
+---
+
+### Step 1 — Flash the Sensor Nodes
+
+1. Open `sensor_node/sensor_node.ino`
+2. Set the correct `NODE_ID` for each board:
+```cpp
+#define NODE_ID 1   // Change to 2 for second node, 3 for third
+```
+3. Update the master's MAC address:
+```cpp
+uint8_t MASTER_MAC[] = {0xXX, 0xXX, 0xXX, 0xXX, 0xXX, 0xXX};
+```
+> Quick way to get master's MAC: flash a one-liner sketch with `Serial.println(WiFi.macAddress());` on the master and note it down.
+
+4. Select **Board: ESP32 Dev Module**, upload, repeat for all 3 nodes.
+
+---
+
+### Step 2 — Flash the Master Node
+
+1. Open `master_node/master_node.ino`
+2. Fill in your credentials:
+```cpp
+char ssid[] = "YOUR_WIFI_SSID";
+char pass[] = "YOUR_WIFI_PASSWORD";
+
+#define BLYNK_AUTH_TOKEN "your_token_here"
+
+unsigned long channelID   = YOUR_CHANNEL_ID;
+const char*   writeAPIKey = "YOUR_WRITE_KEY";
+```
+3. Upload to the master ESP32.
+
+---
+
+### Step 3 — Open the Web Dashboard
+
+1. Open `web_dashboard/index.html` in any browser
+2. Update the ThingSpeak details in the `<script>` block:
+```js
+const CHANNEL_ID   = 'YOUR_CHANNEL_ID';
+const READ_API_KEY = 'YOUR_READ_API_KEY';
+```
+3. Done — it polls ThingSpeak every 5 seconds automatically.
+
+---
+
+## 🚦 System States
+
+| State | Condition | LED | Buzzer |
+|-------|-----------|-----|--------|
+| 🟢 SAFE | Leak probability < 30% | Green ON | Off |
+| 🟡 WARNING | 30% – 70% | — | Off |
+| 🔴 DANGER | ≥ 70% | Red ON | Siren |
+
+---
+
+## 🐛 Things That Broke (And How I Fixed Them)
+
+This section probably took more time than writing the actual code. Documenting it here so anyone building something similar doesn't hit the same walls.
+
+| Problem | What Was Actually Wrong | Fix |
+|---------|------------------------|-----|
+| Wi-Fi kept failing to connect | `WiFi.begin()` was being called inside `loop()` — ESP32 won't reconfigure Wi-Fi while already connecting | Moved it to `setup()` only, never called again |
+| Blynk kept dropping randomly | `Blynk.begin()` reinitializes Wi-Fi internally, which fought with ESP-NOW's channel | Switched to `Blynk.config()` + `Blynk.connect()` — uses existing connection |
+| ESP-NOW fine, ThingSpeak silent | ESP-NOW works even without internet — I assumed everything was connected when it wasn't | Added HTTP status logs; verified cloud connectivity separately |
+| Blynk heartbeat timeouts | Long `delay()` calls were blocking `Blynk.run()` from keeping the connection alive | Replaced all blocking delays with `millis()`-based timing |
+| Serial showing nothing, no cloud data | Had an early `return` when no nodes were active — the loop exited silently before printing anything | Removed early return, added continuous status prints |
+| ESP-NOW packet loss after Wi-Fi connected | Channel mismatch — both need to be on the same RF channel in STA mode | Used `WIFI_STA` mode and let ESP32 manage the channel automatically |
+| `NaN` in leak probability output | Division by zero when `activeCount` was 0 | Added a guard to check `activeCount > 0` before dividing |
+
+---
+
+## 🧠 Viva Prep
+
+**Why ESP-NOW instead of Wi-Fi for the sensor nodes?**  
+ESP-NOW is peer-to-peer and doesn't need a router. It's faster, uses less power, and works even if the Wi-Fi network goes down. For nodes that only need to send data to one place, it's a much better fit.
+
+**Why only the master connects to Wi-Fi?**  
+Centralizing cloud communication keeps sensor nodes simple and power-efficient. There's no reason for three nodes to each manage a Wi-Fi connection when one master can handle it all.
+
+**How does the system know where the leak is?**  
+Whichever node reports the highest AQI gets flagged as the likely leak source. Simple and effective for a distributed layout.
+
+**Is MQ-135 giving real ppm values?**  
+No — it gives relative resistance values. Converting to absolute ppm needs calibration with reference gases, which wasn't in scope here.
+
+**What if a node goes offline during monitoring?**  
+The master tracks active nodes. If a node stops responding, it gets excluded from aggregation automatically — no NaN values, no crashes.
+
+**Can it scale to more nodes?**  
+Yes. ESP-NOW supports multiple peers, and the master's aggregation logic just loops over however many nodes are registered.
+
+---
+
+## 👤 About
+
+**Prasad Panda**  
+BE Electronics Engineering — Terna Engineering College, Navi Mumbai
+
+📧 [prasadakhilpanda@gmail.com](mailto:prasadakhilpanda@gmail.com)  
+🔗 [linkedin.com/in/prasad-dev26](https://www.linkedin.com/in/prasad-dev26)
+
+---
+
+## 📄 License
+
+MIT — use it, modify it, build on it.
