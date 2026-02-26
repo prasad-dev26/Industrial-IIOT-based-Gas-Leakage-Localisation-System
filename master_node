@@ -1,0 +1,261 @@
+/*
+  Master Node — IoT Safety Monitoring System
+  Prasad Panda | Electronics Engineering
+  Terna Engineering College, Navi Mumbai
+
+  This is the central controller. It sits somewhere central in the factory,
+  receives data from all 3 sensor nodes via ESP-NOW, figures out if there's
+  a leak (and where), controls the LEDs and buzzer, and pushes everything
+  to Blynk and ThingSpeak.
+
+  The sensor nodes don't need Wi-Fi at all — they just talk to this guy.
+  This node is the only one that touches the internet.
+
+  Wiring:
+    Red LED  → GPIO 26
+    Green LED → GPIO 27
+    Buzzer   → GPIO 25
+*/
+
+// Blynk needs these defined before the include — links to your dashboard
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID   "TMPL3dj-RlZdw"
+#define BLYNK_TEMPLATE_NAME "sensor node 1"
+#define BLYNK_AUTH_TOKEN    "X1M90Tz_c7PO_2ZuLlnraV1UDR_No2Ox"
+
+#include <WiFi.h>
+#include <esp_now.h>
+#include <BlynkSimpleEsp32.h>
+#include <ThingSpeak.h>
+
+// Your Wi-Fi — only this node needs it
+char ssid[] = "YOUR_SSID";
+char pass[] = "YOUR_PASSWORD";
+
+// ThingSpeak channel details
+unsigned long channelID   = 3197735;
+const char*   writeAPIKey = "BAOKOG4RAL9YHYO5";
+WiFiClient    client;
+
+// Output pins
+#define RED_LED   26
+#define GREEN_LED 27
+#define BUZZER    25
+
+#define TOTAL_NODES    3
+#define DANGER_THRESHOLD 70.0   // leak % above this = DANGER state
+
+// Using millis() for cloud timing instead of delay()
+// Learned this the hard way — delay() was killing Blynk's heartbeat
+unsigned long lastCloudUpdate = 0;
+
+/*
+  SensorData struct — exact same definition as in the sensor node code.
+  ESP-NOW sends raw bytes, so both sides MUST have identical structs.
+  If you change one, change the other too or data will get garbled.
+*/
+typedef struct {
+  uint8_t  node_id;      // which node sent this (1, 2, or 3)
+  uint16_t airQuality;   // relative AQI from MQ-135
+  float    temperature;  // °C from DHT11
+  float    humidity;     // % from DHT11
+  float    nh3;          // estimated NH₃ ppm
+  float    nox;          // estimated NOₓ ppm
+  float    co2;          // estimated CO₂ ppm
+} SensorData;
+
+SensorData node[TOTAL_NODES];
+bool nodeActive[TOTAL_NODES] = {false, false, false};
+
+// Manual override flags — controlled from Blynk app buttons
+bool manualRed    = false;
+bool manualBuzzer = false;
+
+// These get called automatically when V8/V9 buttons are pressed in the app
+BLYNK_WRITE(V8) { manualRed    = param.asInt(); }
+BLYNK_WRITE(V9) { manualBuzzer = param.asInt(); }
+
+/*
+  onReceive — fires every time a sensor node sends us a packet.
+  Works like an interrupt — runs in the background whenever data arrives.
+
+  One thing to know: ESP-NOW works independently of internet connectivity.
+  So even if Wi-Fi drops, this callback keeps receiving data fine.
+  That can be misleading — just because nodes are talking doesn't mean
+  the cloud uploads are working.
+*/
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  SensorData incoming;
+  memcpy(&incoming, data, sizeof(incoming));
+
+  // Validate node ID before storing — avoids array out-of-bounds
+  if (incoming.node_id >= 1 && incoming.node_id <= TOTAL_NODES) {
+    int idx = incoming.node_id - 1;
+    node[idx]       = incoming;
+    nodeActive[idx] = true;
+    Serial.print("📡 Got data from Node ");
+    Serial.println(incoming.node_id);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // Set up actuator pins — default to GREEN (safe) on boot
+  pinMode(RED_LED,   OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(BUZZER,    OUTPUT);
+  digitalWrite(GREEN_LED, HIGH);
+  digitalWrite(RED_LED,   LOW);
+  digitalWrite(BUZZER,    LOW);
+
+  Serial.println("Master Node starting up...");
+
+  /*
+    Wi-Fi init — ONCE, here in setup(), never again.
+
+    Early mistake: was calling WiFi.begin() inside loop() thinking it would
+    reconnect on drops. Turns out ESP32 locks up its Wi-Fi stack if you try
+    to reconfigure while it's already in a connecting state. Took a while
+    to figure that one out.
+  */
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, pass);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println("\n✅ Wi-Fi connected — " + WiFi.localIP().toString());
+
+  /*
+    Blynk init — using config() instead of begin().
+
+    Blynk.begin() internally reinitializes Wi-Fi, which breaks ESP-NOW
+    because the channel gets reset mid-operation. Blynk.config() + connect()
+    tells Blynk to just use the Wi-Fi connection we already have.
+  */
+  Blynk.config(BLYNK_AUTH_TOKEN);
+  Blynk.connect();
+  Serial.println("✅ Blynk connected");
+
+  ThingSpeak.begin(client);
+  Serial.println("✅ ThingSpeak ready");
+
+  /*
+    ESP-NOW init — comes after Wi-Fi so they share the same RF channel.
+    Channel mismatch between Wi-Fi and ESP-NOW was causing random packet
+    drops. WIFI_STA mode lets the ESP32 handle channel sync automatically.
+  */
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("❌ ESP-NOW failed to init. Can't continue.");
+    while (true);
+  }
+  esp_now_register_recv_cb(onReceive);
+  Serial.println("✅ ESP-NOW ready — waiting for sensor nodes...");
+}
+
+void loop() {
+  // Keep Blynk alive — handles heartbeat and incoming commands (V8/V9)
+  Blynk.run();
+
+  // Aggregate data from all active nodes
+  uint16_t maxAQ     = 0;
+  float    sumTemp   = 0, sumHum  = 0;
+  float    sumNH3    = 0, sumNOX  = 0, sumCO2 = 0;
+  int      activeCount = 0;
+  uint8_t  leakNodeID  = 0;
+
+  for (int i = 0; i < TOTAL_NODES; i++) {
+    if (nodeActive[i]) {
+      activeCount++;
+      sumTemp += node[i].temperature;
+      sumHum  += node[i].humidity;
+      sumNH3  += node[i].nh3;
+      sumNOX  += node[i].nox;
+      sumCO2  += node[i].co2;
+
+      // Track which node has the worst air quality — that's likely the leak source
+      if (node[i].airQuality > maxAQ) {
+        maxAQ       = node[i].airQuality;
+        leakNodeID  = node[i].node_id;
+      }
+    }
+  }
+
+  // Print active node summary
+  Serial.println("----------------------------");
+  Serial.print("Active nodes: ");
+  if (activeCount == 0) {
+    Serial.println("none yet");
+  } else {
+    for (int i = 0; i < TOTAL_NODES; i++) {
+      if (nodeActive[i]) { Serial.print(i + 1); Serial.print(" "); }
+    }
+    Serial.println();
+  }
+
+  /*
+    If no nodes are active yet, wait and skip.
+
+    Early version had no check here — resulted in division by zero,
+    which gave NaN in all the averages and confused ThingSpeak.
+    Also had an early return() here which silently stopped everything
+    including cloud updates. Removed that and just print a waiting message.
+  */
+  if (activeCount == 0) {
+    Serial.println("Waiting for sensor nodes...");
+    delay(2000);
+    return;
+  }
+
+  // Calculate averages
+  float avgTemp = sumTemp / activeCount;
+  float avgHum  = sumHum  / activeCount;
+  float avgNH3  = sumNH3  / activeCount;
+  float avgNOX  = sumNOX  / activeCount;
+  float avgCO2  = sumCO2  / activeCount;
+
+  // Leak probability: scale max AQI (0–500) to a 0–100% range
+  float leakProb = constrain((maxAQ / 500.0) * 100, 0, 100);
+
+  Serial.print("Max AQI: ");       Serial.println(maxAQ);
+  Serial.print("Avg Temp: ");      Serial.println(avgTemp);
+  Serial.print("Leak source: Node "); Serial.println(leakNodeID);
+  Serial.print("Leak probability: "); Serial.print(leakProb); Serial.println("%");
+
+  // Trigger actuators if danger threshold is crossed (or manual override from app)
+  bool danger = leakProb >= DANGER_THRESHOLD;
+  digitalWrite(RED_LED,   (manualRed    || danger) ? HIGH : LOW);
+  digitalWrite(GREEN_LED, (manualRed    || danger) ? LOW  : HIGH);
+  digitalWrite(BUZZER,    (manualBuzzer || danger) ? HIGH : LOW);
+
+  // Push live values to Blynk dashboard
+  Blynk.virtualWrite(V0, maxAQ);
+  Blynk.virtualWrite(V1, avgTemp);
+  Blynk.virtualWrite(V2, avgNH3);
+  Blynk.virtualWrite(V3, avgNOX);
+  Blynk.virtualWrite(V4, avgCO2);
+  Blynk.virtualWrite(V7, avgHum);
+
+  // ThingSpeak upload — rate limited to every 20 seconds
+  if (millis() - lastCloudUpdate >= 20000) {
+    lastCloudUpdate = millis();
+
+    ThingSpeak.setField(1, (int)maxAQ);
+    ThingSpeak.setField(2, avgTemp);
+    ThingSpeak.setField(3, avgNH3);
+    ThingSpeak.setField(4, avgNOX);
+    ThingSpeak.setField(5, avgCO2);
+    ThingSpeak.setField(6, (int)leakNodeID);   // which node is the leak source
+    ThingSpeak.setField(7, leakProb);
+    ThingSpeak.setField(8, avgHum);
+
+    int status = ThingSpeak.writeFields(channelID, writeAPIKey);
+    Serial.print("ThingSpeak status: ");
+    Serial.println(status);  // 200 = good | -301 = Wi-Fi issue
+  }
+
+  // No delay() here — blocking the loop breaks Blynk's keep-alive packets
+}
