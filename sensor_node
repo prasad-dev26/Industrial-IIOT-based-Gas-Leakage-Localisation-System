@@ -1,0 +1,152 @@
+/*
+  Sensor Node — IoT Safety Monitoring System
+  Prasad Panda | Electronics Engineering
+  Terna Engineering College, Navi Mumbai
+
+  Each sensor node does one thing well: read the air around it and
+  immediately report to the master node. That's it. No Wi-Fi, no cloud,
+  no complexity.
+
+  It reads gas levels from MQ-135 and temperature/humidity from DHT11,
+  does a quick local check (lights up a red LED if things look bad),
+  then fires off a data packet to the master via ESP-NOW every 3 seconds.
+
+  IMPORTANT before flashing:
+  - Change NODE_ID to 1, 2, or 3 depending on which node this is
+  - Update MASTER_MAC[] with the actual MAC address of your master ESP32
+
+  Wiring:
+    DHT11 data  -> GPIO 4
+    MQ-135 Aout -> GPIO 34  (analog input, 0-3.3V only!)
+    Red LED     -> GPIO 26
+    Green LED   -> GPIO 27
+*/
+
+#include <WiFi.h>       // needed for ESP-NOW to work, even though we don't use internet
+#include <esp_now.h>
+#include <DHT.h>
+
+// Change this for each node you flash
+#define NODE_ID 3   // 1 for Node 1, 2 for Node 2, 3 for Node 3
+
+#define DHTPIN    4
+#define DHTTYPE   DHT11
+#define MQ135_PIN 34
+
+#define RED_LED   26
+#define GREEN_LED 27
+
+// MAC address of the master ESP32 — update this before flashing
+// Get it by running: Serial.println(WiFi.macAddress()); on the master
+uint8_t MASTER_MAC[] = {0xB0, 0xCB, 0xD8, 0xE2, 0xA0, 0xD4};
+
+DHT dht(DHTPIN, DHTTYPE);
+
+/*
+  SensorData — must match the struct in master_node.ino exactly.
+  ESP-NOW sends raw bytes so if these don't match, the master will
+  misread everything silently. No error, just garbage data.
+*/
+typedef struct {
+  uint8_t  node_id;
+  uint16_t airQuality;
+  float    temperature;
+  float    humidity;
+  float    nh3;
+  float    nox;
+  float    co2;
+} SensorData;
+
+SensorData data;
+
+// Thresholds for local LED alert — adjust based on the environment
+#define AQ_THRESHOLD   250
+#define TEMP_THRESHOLD 35.0
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  pinMode(RED_LED,   OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  digitalWrite(GREEN_LED, HIGH);  // start green until we know otherwise
+
+  Serial.print("Sensor Node ");
+  Serial.print(NODE_ID);
+  Serial.println(" starting...");
+
+  // STA mode is required for ESP-NOW — but we never call WiFi.begin()
+  // The node never connects to a router, just uses the Wi-Fi radio for ESP-NOW
+  WiFi.mode(WIFI_STA);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW init failed. Check board and retry.");
+    while (true);
+  }
+
+  // Register the master as a peer so we can send to it
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, MASTER_MAC, 6);
+  peer.channel = 0;       // 0 = auto, matches whatever channel master is on
+  peer.encrypt = false;
+  esp_now_add_peer(&peer);
+
+  Serial.println("Ready. Sending every 3 seconds.");
+}
+
+void loop() {
+  // Read MQ-135 raw ADC value (0-4095 on ESP32's 12-bit ADC)
+  int rawADC = analogRead(MQ135_PIN);
+  if (rawADC < 10) rawADC = 10;  // clamp to avoid division by zero in gas formulas
+
+  // Fill in the packet
+  data.node_id    = NODE_ID;
+  data.airQuality = rawADC / 9;   // scale to roughly 0-455 range
+
+  data.temperature = dht.readTemperature();
+  data.humidity    = dht.readHumidity();
+
+  /*
+    Gas concentration estimation using MQ-135 resistance ratio.
+    Formula: ppm ~ A x (Rs/Ro)^B  — empirical curve fitting for each gas.
+
+    These are relative estimates only, not calibrated absolute values.
+    Getting real ppm would need calibration with reference gases.
+    For a safety threshold system like this, relative values still work fine.
+  */
+  float ratio = (4095.0 - rawADC) / rawADC;
+  data.nh3 = 100 * pow(ratio, -2.4);
+  data.nox = 100 * pow(ratio, -1.5);
+  data.co2 = 110 * pow(ratio, -2.7);
+
+  // Local alert — doesn't wait for master to respond
+  // This way the node is useful even if the master is offline
+  if (data.airQuality >= AQ_THRESHOLD || data.temperature >= TEMP_THRESHOLD) {
+    digitalWrite(RED_LED,   HIGH);
+    digitalWrite(GREEN_LED, LOW);
+    Serial.println("WARNING: Local alert triggered");
+  } else {
+    digitalWrite(RED_LED,   LOW);
+    digitalWrite(GREEN_LED, HIGH);
+  }
+
+  // Print readings to serial for debugging
+  Serial.println("--------------------");
+  Serial.print("Node: ");      Serial.println(data.node_id);
+  Serial.print("AQI: ");       Serial.println(data.airQuality);
+  Serial.print("Temp: ");      Serial.println(data.temperature);
+  Serial.print("Humidity: ");  Serial.println(data.humidity);
+  Serial.print("NH3: ");       Serial.println(data.nh3, 1);
+  Serial.print("NOx: ");       Serial.println(data.nox, 1);
+  Serial.print("CO2: ");       Serial.println(data.co2, 1);
+
+  // Send packet to master — if this fails, check the MAC address
+  esp_err_t result = esp_now_send(MASTER_MAC, (uint8_t*)&data, sizeof(data));
+  if (result == ESP_OK) {
+    Serial.println("Sent to master OK");
+  } else {
+    Serial.println("Send failed — verify MASTER_MAC");
+  }
+
+  delay(3000);  // DHT11 needs ~1s minimum between reads, 3s is comfortable
+}
